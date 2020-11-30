@@ -10,13 +10,14 @@ import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.utils.data
 import torchvision.transforms as transforms
-import torchvision.utils as vutils
 import torch.autograd as autograd
 import data_loader
 from torch.autograd import Variable
 from model import _G_xvz, _G_vzx, _D_xvs
-from itertools import *
 import pdb
+import warnings
+
+warnings.filterwarnings('ignore')
 
 dd = pdb.set_trace
 
@@ -24,16 +25,17 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("-d", "--data_list", type=str, default="./list.txt")
 parser.add_argument("-ns", "--nsnapshot", type=int, default=700)
-parser.add_argument("-b", "--batch_size", type=int, default=64) # 16
+parser.add_argument("-b", "--batch_size", type=int, default=9) # 16
 parser.add_argument("-lr", "--learning_rate", type=float, default=1e-4)
 parser.add_argument("-m" , "--momentum", type=float, default=0.) # 0.5
 parser.add_argument("-m2", "--momentum2", type=float, default=0.9) # 0.999
 parser.add_argument('--outf', default='./output', help='folder to output images and model checkpoints')
-parser.add_argument('--modelf', default='./output', help='folder to output images and model checkpoints')
+parser.add_argument('--modelf', default='./pretrained_model',
+                    help='folder to output images and model checkpoints')
 parser.add_argument('--cuda', action='store_true', help='enables cuda', default=True)
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=25, type=int, metavar='N',
+parser.add_argument('--epochs', default=30, type=int, metavar='N',
                     help='number of total epochs to run')
 
 # Initialize networks
@@ -67,10 +69,9 @@ G_xvz = _G_xvz()
 G_vzx = _G_vzx()
 D_xvs = _D_xvs()
 
-G_xvz.apply(weights_init)
-G_vzx.apply(weights_init)
-D_xvs.apply(weights_init)
-
+# G_xvz.apply(weights_init)
+# G_vzx.apply(weights_init)
+# D_xvs.apply(weights_init)
 
 train_list = args.data_list
 train_loader = torch.utils.data.DataLoader(
@@ -78,7 +79,7 @@ train_loader = torch.utils.data.DataLoader(
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) ])),
     batch_size=args.batch_size, shuffle=True,
-    num_workers=args.workers, pin_memory=True)
+    num_workers=args.workers, pin_memory=True, drop_last=True)
 
 def L1_loss(x, y):
     return torch.mean(torch.sum(torch.abs(x-y), 1))
@@ -92,14 +93,14 @@ v2 = torch.FloatTensor(args.batch_size, v_siz)
 z = torch.FloatTensor(args.batch_size, z_siz)
 
 if args.cuda:
-    G_xvz = torch.nn.DataParallel(G_xvz).cuda()
-    G_vzx = torch.nn.DataParallel(G_vzx).cuda()
-    D_xvs = torch.nn.DataParallel(D_xvs).cuda()
-    x1 = x1.cuda()
-    x2 = x2.cuda()
-    v1 = v1.cuda()
-    v2 = v2.cuda()
-    z = z.cuda()
+    G_xvz = torch.nn.DataParallel(G_xvz)#.cuda()
+    G_vzx = torch.nn.DataParallel(G_vzx)#.cuda()
+    D_xvs = torch.nn.DataParallel(D_xvs)#.cuda()
+    x1 = x1#.cuda()
+    x2 = x2#.cuda()
+    v1 = v1#.cuda()
+    v2 = v2#.cuda()
+    z = z#.cuda()
 
 x1 = Variable(x1)
 x2 = Variable(x2)
@@ -108,18 +109,19 @@ v2 = Variable(v2)
 z = Variable(z)
 
 def load_model(net, path, name):
-    state_dict = torch.load('%s/%s' % (path,name))
+    state_dict = torch.load('%s/%s' % (path,name), map_location=torch.device('cpu'))
     own_state = net.state_dict()
+
     for name, param in state_dict.items():
-        if name not in own_state:
-            print('not load weights %s' % name)
-            continue
-        own_state[name].copy_(param)
+        # if name not in own_state:
+        #     print('not load weights %s' % name)
+        #     continue
+        own_state[name.replace('.module', '')].copy_(param)
         print('load weights %s' % name)
 
-#load_model(G_xvz, args.modelf, 'netG_xvz_epoch_24_699.pth')
-#load_model(G_vzx, args.modelf, 'netG_vzx_epoch_24_699.pth')
-#load_model(D_xvs, args.modelf, 'netD_xvs_epoch_24_699.pth')
+load_model(G_xvz, args.modelf, 'netG_xvz.pth')
+load_model(G_vzx, args.modelf, 'netG_vzx.pth')
+load_model(D_xvs, args.modelf, 'netD_xvs.pth')
 
 lr = args.learning_rate
 ourBetas = [args.momentum, args.momentum2]
@@ -156,8 +158,9 @@ for epoch in range(args.epochs):
         img2 = data2
 
         # get x-->real image v--> view and z-->random vector
-        x1.data.resize_(img1.size()).copy_(img1)
-        x2.data.resize_(img2.size()).copy_(img2)
+        with torch.no_grad():
+            x1.resize_(img1.size()).copy_(img1)
+            x2.resize_(img2.size()).copy_(img2)
         v1.data.zero_()
         v2.data.zero_()
 
@@ -172,12 +175,12 @@ for epoch in range(args.epochs):
         targetNP = v1.cpu().data.numpy()
         idxs = np.where(targetNP>0)[1]
         tmp = torch.LongTensor(idxs)
-        vv1 = Variable(tmp).cuda() # v1 target
+        vv1 = Variable(tmp)#.cuda() # v1 target
 
         targetNP = v2.cpu().data.numpy()
         idxs = np.where(targetNP>0)[1]
         tmp = torch.LongTensor(idxs)
-        vv2 = Variable(tmp).cuda() # v2 target
+        vv2 = Variable(tmp)#.cuda() # v2 target
         
         ## path 1: (v, z)-->G_vzx-->x_bar--> D_xvs( (v,x_bar), (v,x_real) )
         # path 1, update D_xvs
@@ -189,7 +192,7 @@ for epoch in range(args.epochs):
 
         grads = autograd.grad(outputs = D_x_hat_s,
                               inputs = x_hat,
-                              grad_outputs = torch.ones(D_x_hat_s.size()).cuda(),
+                              grad_outputs = torch.ones(D_x_hat_s.size()), #.cuda(),
                               retain_graph = True,
                               create_graph = True,
                               only_inputs = True)[0]
@@ -242,7 +245,7 @@ for epoch in range(args.epochs):
 
         grads = autograd.grad(outputs = D_x_hat_s,
                               inputs = x_hat,
-                              grad_outputs = torch.ones(D_x_hat_s.size()).cuda(),
+                              grad_outputs = torch.ones(D_x_hat_s.size()), # .cuda(),
                               retain_graph = True,
                               create_graph = True,
                               only_inputs = True)[0]
@@ -283,19 +286,9 @@ for epoch in range(args.epochs):
 
         print("Epoch: [%2d] [%4d/%4d] time: %4.4f, "
               "loss_D_vx: %.4f, loss_D_x: %.4f, loss_G: %.4f"
-              % (epoch, i, len(data1), time.time() - start_time,
-                 d_xvs_loss.data[0], d_x_loss.data[0], g_loss.data[0]))
-        if i % snapshot == snapshot-1:
-            vutils.save_image(x_bar.data,
-                              '%s/x_bar_epoch_%03d_%04d.png' % (args.outf, epoch, i),normalize=True)
-            vutils.save_image(x_bar_bar.data,
-                              '%s/x_bar_bar_epoch_%03d_%04d.png' % (args.outf, epoch, i),normalize=True)
-            vutils.save_image(x1.data,
-                    '%s/x1_epoch_%03d_%04d.png' % (args.outf, epoch, i),normalize=True)
-            vutils.save_image(x2.data,
-                    '%s/x2_epoch_%03d_%04d.png' % (args.outf, epoch, i),normalize=True)
+              % (epoch, i, len(train_loader), time.time() - start_time,
+                 d_xvs_loss.item(), d_x_loss.item(), g_loss.item()))
 
-            torch.save(G_xvz.state_dict(), '%s/netG_xvz_epoch_%d_%d.pth' % (args.outf, epoch, i))
-            torch.save(G_vzx.state_dict(), '%s/netG_vzx_epoch_%d_%d.pth' % (args.outf, epoch, i))
-            torch.save(D_xvs.state_dict(), '%s/netD_xvs_epoch_%d_%d.pth' % (args.outf, epoch, i))
-
+torch.save(G_xvz.state_dict(), '%s/netG_xvz.pth' % args.outf)
+torch.save(G_vzx.state_dict(), '%s/netG_vzx.pth' % args.outf)
+torch.save(D_xvs.state_dict(), '%s/netD_xvs.pth' % args.outf)

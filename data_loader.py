@@ -27,8 +27,18 @@ def read_img(img_path):
     img = img.resize((128,128), Image.ANTIALIAS)
     return img
 
-def get_multiPIE_img(img_path):
+def get_custom_image(img_path, view1):
+    view2 = np.random.randint(0, 9)
 
+    while(view1==view2):
+        view2 = np.random.randint(0, 9)
+
+    idx = img_path.find('/')
+    img2 = img_path[:idx+1] + str(view2) + '.JPG'
+
+    return view2, read_img(img2)
+
+def get_multiPIE_img(img_path):
     # img_path: /home/yt219/data/multi_PIE_crop_128/192/192_01_02_140_07_crop_128.png
     tmp = random.randint(0, 8)
     view2 = tmp
@@ -43,7 +53,7 @@ def get_multiPIE_img(img_path):
     status = token[2]
     bright = token[4]
         
-    img2_path = '/home/yt219/data/multi_PIE_crop_128/' + ID + '/' + ID + '_01_' + status + '_' + view + '_' + bright + '_crop_128.png'
+    img2_path = 'data/multi_PIE_crop_128/' + ID + '/' + ID + '_01_' + status + '_' + view + '_' + bright + '_crop_128.png'
     img2 = read_img( img2_path )
     img2 = img2.resize((128,128), Image.ANTIALIAS)
     return view2, img2
@@ -94,36 +104,25 @@ def get_300w_LP_img(img_path):
     return view2, img2
 
 class ImageList(data.Dataset):
-    def __init__( self, list_file, transform=None, is_train=True, 
-                  img_shape=[128,128] ):
+    def __init__( self, list_file, transform=None, is_train=True, img_shape=[128,128] ):
         img_list = [line.rstrip('\n') for line in open(list_file)]
         print('total %d images' % len(img_list))
-
         self.img_list = img_list
         self.transform = transform
         self.is_train = is_train
         self.img_shape = img_shape
         self.transform_img = transforms.Compose([self.transform])
-
     def __getitem__(self, index):
         # img_name: /home/yt219/data/multi_PIE_crop_128/192/192_01_02_140_07_crop_128.png
         img1_path = self.img_list[index]
         token = img1_path.split(' ')
-        
         img1_fpath = token[0]
         view1 = int(token[1])
-        
         img1 = read_img( img1_fpath )
-
-        if img1_fpath.find('multi_PIE') > -1:
-            view2, img2 = get_multiPIE_img(img1_fpath)
-        else:
-            view2, img2 = get_300w_LP_img(img1_fpath)
-
+        view2, img2 = get_custom_image(img1_fpath, view1)
         if self.transform_img is not None:
             img1 = self.transform_img(img1) # [0,1], c x h x w
             img2 = self.transform_img(img2)
-
         return view1, view2, img1, img2
 
     def __len__(self):
